@@ -1,7 +1,12 @@
 package me.rosuh.easywatermark.ui.widget
 
 import android.content.Context
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.drawable.BitmapDrawable
 import android.util.AttributeSet
 import android.view.View
@@ -106,7 +111,7 @@ class SelectableImageView : View {
         invalidate()
     }
 
-    override fun onDraw(canvas: Canvas?) {
+    override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (isSelected) {
             canvas?.drawCircle(

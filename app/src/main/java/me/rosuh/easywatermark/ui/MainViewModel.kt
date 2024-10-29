@@ -1,8 +1,16 @@
 package me.rosuh.easywatermark.ui
 
 import android.app.Activity
-import android.content.*
-import android.graphics.*
+import android.content.ActivityNotFoundException
+import android.content.ContentResolver
+import android.content.ContentUris
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -11,22 +19,38 @@ import android.text.TextPaint
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.FileProvider
-import androidx.lifecycle.*
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.asLiveData
+import androidx.lifecycle.map
+import androidx.lifecycle.viewModelScope
 import androidx.palette.graphics.Palette
 import dagger.hilt.android.lifecycle.HiltViewModel
 import id.zelory.compressor.Compressor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rosuh.easywatermark.BuildConfig
 import me.rosuh.easywatermark.MyApp
 import me.rosuh.easywatermark.R
-import me.rosuh.easywatermark.data.model.*
+import me.rosuh.easywatermark.data.model.ImageInfo
+import me.rosuh.easywatermark.data.model.JobState
+import me.rosuh.easywatermark.data.model.Result
+import me.rosuh.easywatermark.data.model.TextPaintStyle
+import me.rosuh.easywatermark.data.model.TextTypeface
+import me.rosuh.easywatermark.data.model.UserPreferences
+import me.rosuh.easywatermark.data.model.ViewInfo
+import me.rosuh.easywatermark.data.model.WaterMark
+import me.rosuh.easywatermark.data.model.entity.Template
 import me.rosuh.easywatermark.data.repo.MemorySettingRepo
+import me.rosuh.easywatermark.data.repo.TemplateRepository
 import me.rosuh.easywatermark.data.repo.UserConfigRepository
 import me.rosuh.easywatermark.data.repo.WaterMarkRepository
 import me.rosuh.easywatermark.ui.widget.WaterMarkImageView
@@ -40,6 +64,7 @@ import me.rosuh.easywatermark.utils.ktx.launch
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.util.Date
 import javax.inject.Inject
 
 @HiltViewModel
@@ -47,6 +72,7 @@ class MainViewModel @Inject constructor(
     private val userRepo: UserConfigRepository,
     private val waterMarkRepo: WaterMarkRepository,
     private val memorySettingRepo: MemorySettingRepo,
+    private val templateRepo: TemplateRepository,
 ) : ViewModel() {
 
     var nextSelectedPos: Int = 0
@@ -57,16 +83,20 @@ class MainViewModel @Inject constructor(
 
     val waterMark: LiveData<WaterMark> = waterMarkRepo.waterMark.asLiveData()
 
+    private val uiState: MutableStateFlow<UiState> = MutableStateFlow(UiState.None)
+
+    val uiStateFlow: StateFlow<UiState> = uiState.asStateFlow()
+
     private var autoScroll = true
 
     val imageList: LiveData<Pair<List<ImageInfo>, Boolean>> =
-        waterMarkRepo.uriLivedData.map { Pair(it, autoScroll) }
+        waterMarkRepo.imageInfoMapFlow.asLiveData().map { Pair(it, autoScroll) }
 
     val galleryPickedImageList: MutableLiveData<List<Image>> = MutableLiveData()
 
-    val selectedImage: MutableLiveData<ImageInfo> = MutableLiveData()
+    val selectedImage: LiveData<ImageInfo> = waterMarkRepo.selectedImage.asLiveData()
 
-    val saveImageUri: MutableLiveData<List<ImageInfo>> = MutableLiveData()
+    private val saveImageUri: MutableLiveData<List<ImageInfo>> = MutableLiveData()
 
     val saveProcess: MutableLiveData<ImageInfo?> = MutableLiveData()
 
@@ -86,11 +116,7 @@ class MainViewModel @Inject constructor(
 
     val colorPalette: MutableLiveData<Palette> = MutableLiveData()
 
-    private val tmpDrawableBounds by lazy { Rect() }
-    private val drawableBounds by lazy { RectF() }
-    var matrixValues = FloatArray(9)
-    private val tmpSrcBounds by lazy { RectF() }
-    private val tmpDstBounds by lazy { RectF() }
+    private var matrixValues = FloatArray(9)
 
     private val projection = arrayOf(
         MediaStore.Images.Media._ID,
@@ -103,6 +129,42 @@ class MainViewModel @Inject constructor(
         MediaStore.Images.Media.HEIGHT,
         MediaStore.Images.Media.SIZE
     )
+
+    val templateListFlow: StateFlow<List<Template>> = templateRepo.getAllTemplate().stateIn(
+        viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        emptyList()
+    )
+
+    fun addTemplate(content: String) {
+        if (templateRepo.checkIfIsDaoNull()) {
+            launch {
+                uiState.emit(UiState.DatabaseError)
+            }
+            return
+        }
+        viewModelScope.launch {
+            val template = Template(
+                0,
+                content = content,
+                creationDate = Date(),
+                lastModifiedDate = Date()
+            )
+            templateRepo.insertTemplate(template)
+        }
+    }
+
+    fun updateTemplate(template: Template) {
+        viewModelScope.launch {
+            templateRepo.updateTemplate(template)
+        }
+    }
+
+    fun deleteTemplate(template: Template) {
+        viewModelScope.launch {
+            templateRepo.deleteTemplate(template)
+        }
+    }
 
     fun saveImage(
         contentResolver: ContentResolver,
@@ -218,7 +280,7 @@ class MainViewModel @Inject constructor(
             imageInfo.scaleY = 1 / matrixValues[Matrix.MSCALE_X]
             val bitmapPaint = TextPaint().applyConfig(imageInfo, tmpConfig, isScale = false)
             val layoutPaint = Paint()
-            layoutPaint.shader = when (waterMark.value?.markMode) {
+            val shader = when (waterMark.value?.markMode) {
                 WaterMarkRepository.MarkMode.Text -> {
                     WaterMarkImageView.buildTextBitmapShader(
                         imageInfo,
@@ -257,10 +319,30 @@ class MainViewModel @Inject constructor(
                     message = "Unknown markmode"
                 )
             }
-            canvas.drawRect(
-                0f, 0f,
-                mutableBitmap.width.toFloat(), mutableBitmap.height.toFloat(), layoutPaint
-            )
+
+            layoutPaint.shader = shader?.bitmapShader
+
+            if (tmpConfig.obtainTileMode() == Shader.TileMode.CLAMP) {
+                canvas.translate(
+                    0 + imageInfo.offsetX * mutableBitmap.width,
+                    0 + imageInfo.offsetY * mutableBitmap.height
+                )
+                canvas.drawRect(
+                    0f,
+                    0f,
+                    (shader?.width ?: 0).toFloat(),
+                    (shader?.height ?: 0).toFloat(),
+                    layoutPaint
+                )
+            } else {
+                canvas.drawRect(
+                    0f,
+                    0f,
+                    mutableBitmap.width.toFloat(),
+                    mutableBitmap.height.toFloat(),
+                    layoutPaint
+                )
+            }
 
             return@withContext if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val imageCollection =
@@ -341,7 +423,9 @@ class MainViewModel @Inject constructor(
         if (selectedImage.value?.uri == uri) {
             return
         }
-        selectedImage.value = ImageInfo(uri)
+        launch {
+            waterMarkRepo.select(uri)
+        }
     }
 
     fun updateImageList(list: List<Uri>) {
@@ -355,7 +439,7 @@ class MainViewModel @Inject constructor(
     private fun updateImageListInternal(list: List<ImageInfo>) {
         launch {
             autoScroll = true
-            selectedImage.value = list.first()
+            waterMarkRepo.select(list.first().uri)
             nextSelectedPos = 0
             waterMarkRepo.updateImageList(list)
         }
@@ -434,6 +518,20 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    fun updateTileMode(tileMode: Shader.TileMode) {
+        launch {
+            autoScroll = false
+            waterMarkRepo.updateTileMode(tileMode)
+        }
+    }
+
+    fun updateOffset(info: ImageInfo) {
+        launch {
+            autoScroll = false
+            waterMarkRepo.updateOffset(info)
+        }
+    }
+
     fun saveOutput(format: Bitmap.CompressFormat, level: Int) {
         viewModelScope.launch {
             userRepo.updateFormat(format)
@@ -481,14 +579,9 @@ class MainViewModel @Inject constructor(
     }
 
     fun clearData() {
-        selectedImage.value = ImageInfo(Uri.EMPTY)
         launch {
-            waterMarkRepo.resetList()
+            waterMarkRepo.select(Uri.EMPTY)
         }
-    }
-
-    fun resetModeToText() {
-        launch { waterMarkRepo.resetModeToText() }
     }
 
     fun compressImg(activity: Activity) {
@@ -679,6 +772,36 @@ ${System.currentTimeMillis().formatDate("yyy-MM-dd")}
                     image.check = false
                 }
             }
+        }
+    }
+
+    fun goTemplate() {
+        viewModelScope.launch {
+            uiState.emit(UiState.GoTemplate)
+        }
+    }
+
+    fun resetEditDialog() {
+        viewModelScope.launch {
+            uiState.emit(UiState.None)
+        }
+    }
+
+    fun goTemplateEdit() {
+        viewModelScope.launch {
+            uiState.emit(UiState.GoEdit)
+        }
+    }
+
+    fun useTemplate(template: Template) {
+        viewModelScope.launch {
+            uiState.emit(UiState.UseTemplate(template))
+        }
+    }
+
+    fun goEditDialog() {
+        viewModelScope.launch {
+            uiState.emit(UiState.GoEditDialog)
         }
     }
 

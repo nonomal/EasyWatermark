@@ -8,10 +8,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.transition.AutoTransition
+import androidx.transition.TransitionManager
+import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import me.rosuh.easywatermark.R
 import me.rosuh.easywatermark.data.model.ImageInfo
@@ -45,7 +49,7 @@ class SaveImageBSDialogFragment : BaseBindBSDFragment<DialogSaveFileBinding>() {
                         openShare()
                     } else {
                         // saving jobs
-                        requireActivity().preCheckStoragePermission {
+                        (activity as? MainActivity)?.requestPermission {
                             shareViewModel.saveImage(
                                 requireActivity().contentResolver,
                                 (requireContext() as MainActivity).getImageViewInfo(),
@@ -168,11 +172,15 @@ class SaveImageBSDialogFragment : BaseBindBSDFragment<DialogSaveFileBinding>() {
                     isEnabled = true
                     text = getString(R.string.share)
                 }
+                TransitionManager.beginDelayedTransition(binding.root, AutoTransition())
                 binding.btnOpenGallery.isInvisible = false
                 binding.atvFormat.isEnabled = true
                 binding.slideQuality.isEnabled = true
                 binding.menuFormat.isEnabled = true
-                (dialog as BottomSheetDialog).behavior.isDraggable = true
+                (dialog as BottomSheetDialog).behavior.apply {
+                    isDraggable = true
+                    state = STATE_EXPANDED
+                }
                 isCancelable = true
             }
             else -> {

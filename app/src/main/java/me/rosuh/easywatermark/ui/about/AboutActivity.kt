@@ -2,12 +2,13 @@ package me.rosuh.easywatermark.ui.about
 
 import android.content.Intent
 import android.content.res.ColorStateList
-import android.graphics.*
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
@@ -15,14 +16,24 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.children
+import androidx.core.view.updateLayoutParams
 import androidx.core.widget.TextViewCompat
 import androidx.palette.graphics.Palette
 import dagger.hilt.android.AndroidEntryPoint
 import me.rosuh.cmonet.CMonet
 import me.rosuh.easywatermark.BuildConfig
 import me.rosuh.easywatermark.databinding.ActivityAboutBinding
-import me.rosuh.easywatermark.utils.ktx.*
+import me.rosuh.easywatermark.utils.ktx.bgColor
+import me.rosuh.easywatermark.utils.ktx.colorBackground
+import me.rosuh.easywatermark.utils.ktx.colorPrimary
+import me.rosuh.easywatermark.utils.ktx.colorSecondaryContainer
+import me.rosuh.easywatermark.utils.ktx.colorSurface
+import me.rosuh.easywatermark.utils.ktx.inflate
+import me.rosuh.easywatermark.utils.ktx.openLink
+import me.rosuh.easywatermark.utils.ktx.titleTextColor
 
 @AndroidEntryPoint
 class AboutActivity : AppCompatActivity() {
@@ -50,14 +61,27 @@ class AboutActivity : AppCompatActivity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS)
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         window.statusBarColor = Color.TRANSPARENT
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.findViewById<View>(android.R.id.content)?.foreground = null
-        }
+        window.findViewById<View>(android.R.id.content)?.foreground = null
     }
 
 
     private fun initView() {
         with(binding) {
+            // WindowInsets.Companion.navigationBars: WindowInsets
+            ViewCompat.setOnApplyWindowInsetsListener(nsv) { v, windowInsets ->
+                val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+                // Apply the insets as a margin to the view. This solution sets
+                // only the bottom, left, and right dimensions, but you can apply whichever
+                // insets are appropriate to your layout. You can also update the view padding
+                // if that's more appropriate.
+                v.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin = insets.bottom
+                }
+
+                // Return CONSUMED if you don't want want the window insets to keep passing
+                // down to descendant views.
+                WindowInsetsCompat.CONSUMED
+            }
             bgDrawable = ContextCompat.getDrawable(
                 this@AboutActivity,
                 me.rosuh.easywatermark.R.drawable.bg_gradient_about_page
@@ -69,14 +93,7 @@ class AboutActivity : AppCompatActivity() {
             }
             tvVersionValue.text = BuildConfig.VERSION_NAME
             tvRating.setOnClickListener {
-                kotlin.runCatching {
-                    startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("market://details?id=me.rosuh.easywatermark")
-                        )
-                    )
-                }
+                openLink(Uri.parse("market://details?id=me.rosuh.easywatermark"))
             }
             tvFeedBack.setOnClickListener {
                 openLink("https://github.com/rosuH/EasyWatermark/issues/new")
@@ -95,20 +112,10 @@ class AboutActivity : AppCompatActivity() {
                 }
             }
             tvPrivacyCn.setOnClickListener {
-                val browserIntent =
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse("https://github.com/rosuH/EasyWatermark/blob/master/PrivacyPolicy_zh-CN.md")
-                    )
-                kotlin.runCatching { startActivity(browserIntent) }
+                openLink(Uri.parse("https://github.com/rosuH/EasyWatermark/blob/master/PrivacyPolicy_zh-CN.md"))
             }
             tvPrivacyEng.setOnClickListener {
-                val browserIntent =
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse("https://github.com/rosuH/EasyWatermark/blob/master/PrivacyPolicy.md")
-                    )
-                kotlin.runCatching { startActivity(browserIntent) }
+                openLink(Uri.parse("https://github.com/rosuH/EasyWatermark/blob/master/PrivacyPolicy.md"))
             }
             civAvatar.setOnClickListener {
                 openLink("https://github.com/rosuH")
@@ -147,6 +154,7 @@ class AboutActivity : AppCompatActivity() {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
                         applyPaletteForSupportNight(it)
                     }
+
                     it == null -> {
                         binding.clContainer.children
                             .plus(binding.tvTitle)
@@ -165,11 +173,9 @@ class AboutActivity : AppCompatActivity() {
                             }
                         return@observe
                     }
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
-                        applyPaletteForSupportLightStatusIcon(it)
-                    }
+
                     else -> {
-                        applyPaletteForNoMatterWhoYouAre(it)
+                        applyPaletteForSupportLightStatusIcon(it)
                     }
                 }
             }

@@ -1,11 +1,27 @@
-import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import com.android.build.gradle.internal.api.ApkVariantOutputImpl
 
 plugins {
-    id("com.android.application")
-    id("kotlin-android")
-    id("kotlin-parcelize")
-    id("org.jetbrains.kotlin.kapt")
-    id("dagger.hilt.android.plugin")
+    id(libs.plugins.android.application.get().pluginId)
+    id(libs.plugins.kotlin.android.get().pluginId)
+    id(libs.plugins.kotlin.parcelize.get().pluginId)
+    id(libs.plugins.ksp.get().pluginId)
+    id(libs.plugins.hilt.plugin.get().pluginId)
+    id(libs.plugins.spotless.get().pluginId)
+}
+
+/**
+ * read version from gradle.properties
+ */
+val majorVersion by properties
+val minorVersion by properties
+val patchVersion by properties
+
+fun getVersionCode(): Int {
+    return (majorVersion as String).toInt() * 10000 + (minorVersion as String).toInt() * 100 + (patchVersion as String).toInt()
+}
+
+fun getVersionName(): String {
+    return "$majorVersion.$minorVersion.$patchVersion"
 }
 
 android {
@@ -15,21 +31,17 @@ android {
         applicationId = "me.rosuh.easywatermark"
         minSdk = (Apps.minSdk)
         targetSdk = (Apps.targetSdk)
-        versionCode = 20707
-        versionName = "2.7.7"
+        versionCode = getVersionCode()
+        versionName = getVersionName()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        setProperty("archivesBaseName", "$applicationId-v$versionName($versionCode)")
     }
 
     buildTypes {
-        getByName(BuildTypes.Debug) {
-            isMinifyEnabled = false
-            applicationIdSuffix = ".${BuildTypes.Debug}"
-            versionNameSuffix = ".${BuildTypes.Debug}"
-            isDebuggable = true
+        val debug by getting {
+            applicationIdSuffix = ".debug"
         }
 
-        getByName(BuildTypes.Release) {
+        val release by getting {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -37,22 +49,15 @@ android {
                 "coroutines.pro", "proguard-rules.pro"
             )
         }
+
         create("benchmark") {
+            initWith(release)
             signingConfig = signingConfigs.getByName("debug")
-            isDebuggable = false
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility(JavaVersion.VERSION_11)
-        targetCompatibility(JavaVersion.VERSION_11)
-    }
-
-    // change output apk name
-    applicationVariants.all {
-        outputs.all {
-            (this as? BaseVariantOutputImpl)?.outputFileName =
-                "$applicationId-v$versionName($versionCode).apk"
+            // [START_EXCLUDE silent]
+            // Selects release buildType if the benchmark buildType not available in other modules.
+            matchingFallbacks.add("release")
+            // [END_EXCLUDE]
+            proguardFiles("benchmark-rules.pro")
         }
     }
 
@@ -61,53 +66,137 @@ android {
     }
 
     android.buildFeatures.viewBinding = true
+    
+    namespace = "me.rosuh.easywatermark"
 
-    kotlinOptions {
-        jvmTarget = "11"
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = libs.versions.androidxComposeCompiler.get()
+    }
+
+    kotlin {
+        jvmToolchain(17)
+    }
+
+    applicationVariants.configureEach {
+        outputs.configureEach {
+            (this as? ApkVariantOutputImpl)?.outputFileName =
+                "EasyWatermark-$versionName-$versionCode.apk"
+        }
     }
 }
 
-kapt {
-    correctErrorTypes = true
-}
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
     implementation(project(mapOf("path" to ":cmonet")))
 
-    implementation("androidx.datastore:datastore-preferences:1.0.0")
-    implementation("com.google.dagger:hilt-android:2.40.4")
-    implementation("androidx.asynclayoutinflater:asynclayoutinflater:1.0.0")
-    kapt("com.google.dagger:hilt-compiler:2.40.4")
-    implementation("com.github.bumptech.glide:glide:4.13.1")
-    kapt("com.github.bumptech.glide:compiler:4.13.1")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.6.21")
-    implementation("androidx.appcompat:appcompat:1.4.1")
-    implementation("id.zelory:compressor:3.0.1")
-    implementation("com.google.android.material:material:1.6.0-beta01")
-    implementation("androidx.fragment:fragment-ktx:1.4.1")
-    implementation("androidx.activity:activity-ktx:1.4.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.1")
-    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.4.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.4.0")
-    implementation("com.github.skydoves:colorpickerview:2.2.3")
-    implementation("androidx.viewpager2:viewpager2:1.0.0")
-    implementation("androidx.recyclerview:recyclerview:1.2.1")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.3")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.6.21")
-    implementation("androidx.exifinterface:exifinterface:1.3.3")
-    implementation("androidx.palette:palette-ktx:1.0.0")
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    implementation(libs.core.ktx)
+    ksp(libs.room.compiler)
 
-    testImplementation("junit:junit:4.12")
-    testImplementation("androidx.test:core:1.4.0")
-    testImplementation("org.mockito:mockito-core:4.0.0")
-    androidTestImplementation("org.mockito:mockito-android:4.0.0")
-    androidTestImplementation("org.robolectric:robolectric:4.4")
-    androidTestImplementation("androidx.test:rules:1.4.0")
-    androidTestImplementation("androidx.test:runner:1.4.0")
-    androidTestImplementation("org.hamcrest:hamcrest-library:2.2")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.4.0")
-    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.2.0")
-    androidTestImplementation("androidx.test.ext:junit:1.1.3")
+    implementation(libs.datastore.preference)
+
+    // di
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    androidTestImplementation(libs.hilt.testing)
+    kspAndroidTest(libs.hilt.compiler)
+
+    implementation(libs.asynclayout.inflater)
+
+    implementation(libs.glide)
+    ksp(libs.glide.compiler)
+
+    implementation(libs.compressor)
+
+    implementation(libs.kotlin.stdlib)
+    implementation(libs.kotlin.coroutine.android)
+    implementation(libs.kotlin.coroutine.core)
+
+    implementation(libs.appcompat)
+    implementation(libs.material)
+    implementation(libs.fragment.ktx)
+    implementation(libs.activity.ktx)
+    implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.livedata.ktx)
+    implementation(libs.lifecycle.viewmodel.ktx)
+    implementation(libs.viewpager2)
+    implementation(libs.recyclerview)
+    implementation(libs.constraintlayout)
+    implementation(libs.exifinterface)
+    implementation(libs.palette.ktx)
+    implementation(libs.profileinstaller)
+
+    implementation(libs.colorpicker)
+
+
+    testImplementation(libs.test.junit)
+    testImplementation(libs.test.rules)
+    testImplementation(libs.test.runner)
+    androidTestImplementation(libs.mockito.core)
+    androidTestImplementation(libs.mockito.android)
+    androidTestImplementation(libs.robolectric)
+    androidTestImplementation(libs.hamcrest.library)
+    androidTestImplementation(libs.test.espresso.core)
+    androidTestImplementation(libs.test.uiautomator)
+    androidTestImplementation(libs.test.ext.junit)
+
+    // or only import the main APIs for the underlying toolkit systems,
+    // such as input and measurement/layout
+//    val composeBom = platform("androidx.compose:compose-bom:2023.10.00")
+//    implementation(composeBom)
+//    androidTestImplementation(composeBom)
+    implementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    //    implementation("androidx.compose.material3:material3:1.2.0-alpha09")
+//    implementation("androidx.compose.material3:material3-window-size-class:1.1.2")
+//    implementation(libs.material)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material3.windowSizeClass)
+//    implementation("androidx.compose.ui:ui")
+    implementation(libs.androidx.compose.ui.ui)
+
+//    implementation("androidx.compose.ui:ui-tooling-preview")
+//    debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.ui.tooling)
+
+    // Optional - Integration with activities
+//    implementation("androidx.activity:activity-compose:1.8.0")
+    implementation(libs.androidx.activity.compose)
+    // Optional - Integration with ViewModels
+//    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
+    implementation(libs.androidx.compose.lifecycle.viewmodel)
+
+    // When using a MDC theme
+//    implementation("com.google.android.material:compose-theme-adapter:1.2.1")
+
+//    implementation("com.google.accompanist:accompanist-permissions:0.33.2-alpha")
+    implementation(libs.accompanist.permissions)
+//    implementation("io.coil-kt:coil-compose:2.3.0")
+    implementation(libs.coil.kt)
+    implementation(libs.coil.kt.compose)
+    implementation(libs.coil.kt.svg)
+
+//    implementation("androidx.compose.runtime:runtime-livedata:1.5.3")
+    implementation(libs.androidx.compose.runtime.livedata)
+
+//    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
+    implementation(libs.androidx.lifecycle.runtime.compose)
+
+//    implementation("androidx.navigation:navigation-compose:2.7.4")
+    implementation(libs.androidx.navigation.compose)
+
+//    implementation("com.google.accompanist:accompanist-navigation-animation:0.31.1-alpha")
+    implementation(libs.accompanist.navigation.animation)
+
+//    implementation("androidx.constraintlayout:constraintlayout-compose:1.0.1")
+    implementation(libs.androidx.constraintlayout.compose)
+    implementation(libs.androidx.motionlayoout.compose)
+
 }

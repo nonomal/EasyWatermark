@@ -20,13 +20,17 @@ import android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResultCallback
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.forEach
 import androidx.fragment.app.commit
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.flowWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -43,10 +47,7 @@ import me.rosuh.easywatermark.data.repo.WaterMarkRepository
 import me.rosuh.easywatermark.ui.about.AboutActivity
 import me.rosuh.easywatermark.ui.adapter.FuncPanelAdapter
 import me.rosuh.easywatermark.ui.adapter.PhotoListPreviewAdapter
-import me.rosuh.easywatermark.ui.dialog.CompressImageDialogFragment
-import me.rosuh.easywatermark.ui.dialog.EditTextBSDialogFragment
-import me.rosuh.easywatermark.ui.dialog.GalleryFragment
-import me.rosuh.easywatermark.ui.dialog.SaveImageBSDialogFragment
+import me.rosuh.easywatermark.ui.dialog.*
 import me.rosuh.easywatermark.ui.panel.*
 import me.rosuh.easywatermark.ui.widget.CenterLayoutManager
 import me.rosuh.easywatermark.ui.widget.LaunchView
@@ -63,8 +64,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pickIconLauncher: ActivityResultLauncher<String>
     private val viewModel: MainViewModel by viewModels()
 
-    private val currentBgColor:Int
+    private val currentBgColor: Int
         get() = ((launchView.parent as? View?)?.background as? ColorDrawable)?.color ?: colorSurface
+
+    private lateinit var requestPermissionLauncher: ActivityResultLauncher<String>
 
     private val contentFunList: List<FuncTitleModel> by lazy {
         listOf(
@@ -83,6 +86,11 @@ class MainActivity : AppCompatActivity() {
 
     private val styleFunList: List<FuncTitleModel> by lazy {
         listOf(
+            FuncTitleModel(
+                FuncTitleModel.FuncType.TileMode,
+                getString(R.string.title_tile_mode),
+                R.drawable.ic_tile_mode
+            ),
             FuncTitleModel(
                 FuncTitleModel.FuncType.TextSize,
                 getString(R.string.title_text_size),
@@ -195,14 +203,7 @@ class MainActivity : AppCompatActivity() {
         }
         val btnStore = findViewById<Button>(R.id.btn_store).apply {
             setOnClickListener {
-                try {
-                    startActivity(
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("market://details?id=me.rosuh.easywatermark")
-                        )
-                    )
-                } catch (e: Exception) {
+                openLink(Uri.parse("market://details?id=me.rosuh.easywatermark")) {
                     Toast.makeText(this@MainActivity, R.string.store_not_found, Toast.LENGTH_SHORT)
                         .show()
                 }
@@ -230,6 +231,16 @@ class MainActivity : AppCompatActivity() {
             registerForActivityResult(PickImageContract()) { uri: Uri? ->
                 handleActivityResult(REQ_PICK_ICON, listOf(uri))
             }
+        requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+            if (isGranted) {
+                return@registerForActivityResult
+            }
+            Toast.makeText(
+                this,
+                getString(R.string.request_permission_failed),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -280,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCrashDialog(crashInfo: String?) {
-        MaterialAlertDialogBuilder(this, R.style.MaterialAlertDialog)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.tips_tip_title)
             .setMessage(R.string.msg_crash)
             .setNegativeButton(
@@ -297,6 +308,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initObserver() {
+        lifecycleScope.launch {
+            viewModel.uiStateFlow.flowWithLifecycle(
+                this@MainActivity.lifecycle,
+                Lifecycle.State.STARTED
+            ).collect {
+                if (it == UiState.GoEditDialog) {
+                    TextWatermarkBSDFragment.safetyShow(supportFragmentManager)
+                }
+            }
+        }
         viewModel.waterMark.observe(this) {
             if (it == null) {
                 return@observe
@@ -304,6 +325,9 @@ class MainActivity : AppCompatActivity() {
             Log.i("initObserver", "$it")
             launchView.post {
                 launchView.ivPhoto.config = it
+            }
+            if (it.markMode == WaterMarkRepository.MarkMode.Image && launchView.tabLayout.selectedTabPosition == 0) {
+                hideDetailPanel()
             }
             viewModel.resetJobStatus()
         }
@@ -314,10 +338,10 @@ class MainActivity : AppCompatActivity() {
             try {
                 val isAnimating = launchView.toEditorMode()
                 if (isAnimating) {
-                    launchView.ivPhoto.updateUri(isAnimating, it)
+                    launchView.ivPhoto.updateUri(true, it)
                     selectTab(0)
                 } else {
-                    launchView.ivPhoto.updateUri(isAnimating, it)
+                    launchView.ivPhoto.updateUri(false, it)
                 }
             } catch (se: SecurityException) {
                 se.printStackTrace()
@@ -327,7 +351,10 @@ class MainActivity : AppCompatActivity() {
         }
         viewModel.imageList.observe(this) {
             photoListPreviewAdapter.selectedPos = viewModel.nextSelectedPos
-            photoListPreviewAdapter.submitList(it.first) {
+            photoListPreviewAdapter.submitList(it.first.toList()) {
+                if (it.second.not()) {
+                    return@submitList
+                }
                 launchView.rvPhotoList.apply {
                     post { smoothScrollToPosition(0) }
                 }
@@ -357,13 +384,13 @@ class MainActivity : AppCompatActivity() {
             val titleTextColor = palette.titleTextColor(this)
 
             bgTransformAnimator = currentBgColor.toColor(bgColor) {
-                    val c = it.animatedValue as Int
-                    if (launchView.isEdit()) {
-                        doApplyBgChanged(c)
-                    } else {
-                        doApplyBgChanged()
-                    }
+                val c = it.animatedValue as Int
+                if (launchView.isEdit()) {
+                    doApplyBgChanged(c)
+                } else {
+                    doApplyBgChanged()
                 }
+            }
             funcAdapter.textColor.toColor(titleTextColor) {
                 val c = it.animatedValue as Int
                 funcAdapter.applyTextColor(c)
@@ -372,7 +399,7 @@ class MainActivity : AppCompatActivity() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         menuItem.iconTintList = ColorStateList.valueOf(c)
                     } else {
-                        menuItem.icon.setTint(c)
+                        menuItem.icon?.setTint(c)
                     }
                 }
             }
@@ -414,7 +441,7 @@ class MainActivity : AppCompatActivity() {
         }
         // pick image button
         launchView.ivSelectedPhotoTips.setOnClickListener {
-            preCheckStoragePermission {
+            checkReadingPermission(requestPermissionLauncher) {
                 performFileSearch(REQ_CODE_PICK_IMAGE)
             }
         }
@@ -422,6 +449,12 @@ class MainActivity : AppCompatActivity() {
         launchView.ivPhoto.apply {
             onBgReady { palette ->
                 viewModel.updateColorPalette(palette)
+            }
+            onOffsetChanged {
+                viewModel.updateOffset(it)
+            }
+            onScaleEnd {
+                viewModel.updateTextSize(it)
             }
         }
         // functional panel in recyclerView
@@ -492,18 +525,9 @@ class MainActivity : AppCompatActivity() {
                 viewModel.selectImage(uri)
                 vibrateHelper.doVibrate(snapView)
             }
-
-            post {
-                canAutoSelected = false
-                scrollToPosition(0)
-                canAutoSelected = true
-            }
         }
 
         launchView.tabLayout.apply {
-            post {
-                selectTab(0)
-            }
             addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
                 override fun onTabSelected(tab: TabLayout.Tab?) {
                     if (tab == null) {
@@ -515,9 +539,18 @@ class MainActivity : AppCompatActivity() {
                     when (tab.position) {
                         0 -> {
                             val curPos =
-                                if (launchView.ivPhoto.config?.markMode == WaterMarkRepository.MarkMode.Text) 0 else 1
-                            adapter?.seNewData(contentFunList, curPos)
-                            manuallySelectedItem(curPos)
+                                if (launchView.ivPhoto.config?.markMode == WaterMarkRepository.MarkMode.Image) 1 else 0
+                            if (curPos == 0) {
+                                launchView.rvPanel.smoothScrollToPosition(0)
+                                adapter?.also {
+                                    it.seNewData(contentFunList, 0)
+                                    post { handleFuncItem(it.dataSet[0]) }
+                                }
+                            } else {
+                                hideDetailPanel()
+                                adapter?.seNewData(contentFunList, curPos)
+                                manuallySelectedItem(curPos)
+                            }
                         }
                         2 -> {
                             launchView.rvPanel.smoothScrollToPosition(0)
@@ -539,6 +572,9 @@ class MainActivity : AppCompatActivity() {
                 override fun onTabUnselected(tab: TabLayout.Tab?) {}
 
                 override fun onTabReselected(tab: TabLayout.Tab?) {
+                    if (tab?.position == 0) {
+                        handleFuncItem(contentFunList[0])
+                    }
                 }
             })
         }
@@ -556,10 +592,10 @@ class MainActivity : AppCompatActivity() {
         Log.i("handleFuncItem", "item = $item")
         when (item.type) {
             FuncTitleModel.FuncType.Text -> {
-                EditTextBSDialogFragment.safetyShow(supportFragmentManager)
+                TextContentDisplayFragment.replaceShow(this, launchView.fcFunctionDetail.id)
             }
             FuncTitleModel.FuncType.Icon -> {
-                preCheckStoragePermission {
+                checkReadingPermission(requestPermissionLauncher) {
                     performFileSearch(REQ_PICK_ICON)
                 }
             }
@@ -583,6 +619,9 @@ class MainActivity : AppCompatActivity() {
             }
             FuncTitleModel.FuncType.TextSize -> {
                 TextSizePbFragment.replaceShow(this, launchView.fcFunctionDetail.id)
+            }
+            FuncTitleModel.FuncType.TileMode -> {
+                TileModeFragment.replaceShow(this, launchView.fcFunctionDetail.id)
             }
         }
     }
@@ -609,9 +648,7 @@ class MainActivity : AppCompatActivity() {
             window.decorView.systemUiVisibility = systemUiVisibilityFlags
         }
         window.statusBarColor = color
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.findViewById<View>(android.R.id.content)?.foreground = null
-        }
+        window.findViewById<View>(android.R.id.content)?.foreground = null
     }
 
 
@@ -627,7 +664,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         R.id.action_pick -> {
-            preCheckStoragePermission {
+            checkReadingPermission(requestPermissionLauncher) {
                 performFileSearch(REQ_CODE_PICK_IMAGE)
             }
             true
@@ -659,7 +696,7 @@ class MainActivity : AppCompatActivity() {
             if (result.isFailure) {
                 Toast.makeText(
                     this,
-                    getString(R.string.tips_not_app_can_open_imaegs),
+                    getString(R.string.tips_not_app_can_open_images),
                     Toast.LENGTH_LONG
                 ).show()
                 Log.i("performFileSearch", result.exceptionOrNull()?.message ?: "No msg provided")
@@ -671,25 +708,6 @@ class MainActivity : AppCompatActivity() {
                     launchView.logoView.start()
                 }
                 show(supportFragmentManager, "GalleryFragment")
-            }
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        when (requestCode) {
-            REQ_CODE_REQ_WRITE_PERMISSION -> {
-                if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(
-                        this,
-                        getString(R.string.request_permission_failed),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
             }
         }
     }
@@ -710,7 +728,7 @@ class MainActivity : AppCompatActivity() {
         val finalList = list?.filterNotNull()?.filter {
             FileUtils.isImage(this.contentResolver, it)
         } ?: emptyList()
-        if (finalList.isNullOrEmpty()) {
+        if (finalList.isEmpty()) {
             Toast.makeText(
                 this,
                 getString(R.string.tips_do_not_choose_image),
@@ -740,11 +758,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
+        if (MyApp.recoveryMode) {
+            super.onBackPressed()
+            return
+        }
         if (launchView.mode == LaunchView.ViewMode.LaunchMode) {
             super.onBackPressed()
             return
         }
-        MaterialAlertDialogBuilder(this, R.style.MaterialAlertDialog)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.dialog_title_exist_confirm)
             .setMessage(R.string.dialog_content_exist_confirm)
             .setNegativeButton(
@@ -767,11 +789,17 @@ class MainActivity : AppCompatActivity() {
         viewModel.clearData()
         launchView.ivPhoto.reset()
         bgTransformAnimator?.cancel()
+        TextContentDisplayFragment.remove(this)
         doApplyBgChanged()
         hideDetailPanel()
     }
 
-    private fun doApplyBgChanged(color: Int = ContextCompat.getColor(this, R.color.md_theme_dark_background)) {
+    private fun doApplyBgChanged(
+        color: Int = ContextCompat.getColor(
+            this,
+            R.color.md_theme_dark_background
+        )
+    ) {
         (launchView.parent as? View?)?.setBackgroundColor(color)
         window?.navigationBarColor = Color.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -792,6 +820,10 @@ class MainActivity : AppCompatActivity() {
 
     fun getImageViewInfo(): ViewInfo {
         return ViewInfo.from(launchView.ivPhoto)
+    }
+
+    fun requestPermission(block: () -> Unit) {
+        checkWritingPermission(requestPermissionLauncher, grant = block)
     }
 
     companion object {

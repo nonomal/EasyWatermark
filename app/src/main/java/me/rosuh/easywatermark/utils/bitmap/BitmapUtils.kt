@@ -4,8 +4,12 @@ import android.app.ActivityManager
 import android.content.ContentResolver
 import android.content.Context
 import android.database.Cursor
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.graphics.Matrix.ScaleToFit
+import android.graphics.Rect
+import android.graphics.RectF
 import android.net.Uri
 import android.provider.MediaStore
 import android.util.Log
@@ -106,21 +110,25 @@ private fun getOrientation(
             }
             else -> {
                 // do not need to rotate bitmap
-                val cursor: Cursor? = context.contentResolver.query(
-                    uri,
-                    arrayOf(MediaStore.Images.ImageColumns.ORIENTATION),
-                    null,
-                    null,
-                    null
-                )
-                if (cursor?.count != 1) {
-                    cursor?.close()
+                try {
+                    val cursor: Cursor? = context.contentResolver.query(
+                        uri,
+                        arrayOf(MediaStore.Images.ImageColumns.ORIENTATION),
+                        null,
+                        null,
+                        null
+                    )
+                    if (cursor?.count != 1) {
+                        cursor?.close()
+                        return 0f
+                    }
+                    cursor.moveToFirst()
+                    val orientation: Int = cursor.getInt(0)
+                    cursor.close()
+                    return orientation.toFloat()
+                } catch (e: Exception) {
                     return 0f
                 }
-                cursor.moveToFirst()
-                val orientation: Int = cursor.getInt(0)
-                cursor.close()
-                return orientation.toFloat()
             }
         }
     }
@@ -409,7 +417,7 @@ private val sS2FArray = arrayOf(
     ScaleToFit.END
 )
 
-fun ImageView.ScaleType.toNativeInt(): Int {
+fun ScaleType.toNativeInt(): Int {
     return when (this) {
         ScaleType.MATRIX -> 0
         ScaleType.FIT_XY -> 1

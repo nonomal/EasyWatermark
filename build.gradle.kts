@@ -1,45 +1,35 @@
-buildscript {
+import com.diffplug.gradle.spotless.SpotlessExtension
 
+buildscript {
     repositories {
-        google()
         mavenCentral()
-        maven("https://jitpack.io")
-        maven("https://plugins.gradle.org/m2/")
+        google()
+        gradlePluginPortal()
     }
+
     dependencies {
-        classpath("com.android.tools.build:gradle:7.1.2")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.10")
-        classpath("org.jlleitschuh.gradle:ktlint-gradle:10.1.0")
-        classpath("com.google.dagger:hilt-android-gradle-plugin:2.38.1")
-        // NOTE: Do not place your application dependencies here; they belong
-        // in the individual module build.gradle files
+        classpath(libs.agp)
+        classpath(libs.kotlin.gradlePlugin)
+        classpath(libs.hilt.plugin)
     }
+}
+
+
+plugins {
+    alias(libs.plugins.hilt) apply false
+    alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.spotless) apply false
 }
 
 allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven("https://jitpack.io")
-    }
-}
-
-tasks.register("clean", Delete::class) {
-    delete(rootProject.buildDir)
-}
-
-apply(plugin = "org.jlleitschuh.gradle.ktlint")
-
-subprojects {
-    apply(plugin = "org.jlleitschuh.gradle.ktlint") // Version should be inherited from parent
-
-    repositories {
-        // Required to download KtLint
-        mavenCentral()
-    }
-
-    // Optionally configure plugin
-    configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
-        debug.set(true)
+    plugins.apply(rootProject.libs.plugins.spotless.get().pluginId)
+    extensions.configure<SpotlessExtension> {
+        kotlin {
+            target("src/**/*.kt")
+            ktlint(rootProject.libs.ktlint.get().version)
+        }
+        kotlinGradle {
+            ktlint(rootProject.libs.ktlint.get().version)
+        }
     }
 }
